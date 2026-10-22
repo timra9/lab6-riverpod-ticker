@@ -45,3 +45,31 @@ The final code uses `ref.refresh(tickerProvider.future)`.
 Already handled by the arm order: after Retry the state is an `AsyncError` (or `AsyncLoading`) that still carries the old ticks, so it matches the banner arm or the progress-bar arm before it can reach `AsyncLoading()`. The full-screen spinner only shows on cold start, when there is no value yet. Checked: cold start shows the spinner; Break feed shows the progress bar over the rows, then the banner over dimmed rows; Retry keeps the rows and brings back live data.
 
 **Difference between `isRefreshing` and `isReloading`:** both mean "loading while holding an old value", but `isRefreshing` is a reload the code asked for with `ref.refresh` / `ref.invalidate`, while `isReloading` is a rebuild caused by a dependency changing (here `tickFeedProvider` changing when `failAfterProvider` is toggled).
+
+## Part 5 - Tests
+
+`flutter test` passes 6 tests: 2 provider tests and 4 widget tests, including `error after data shows banner over rows`, which uses a `StreamController`: it adds `sample`, checks the row is shown with no banner, then calls `addError` and checks that both the `MaterialBanner` and the `BTC` row are on screen.
+
+Changes needed for Riverpod 3:
+- `riverpod_test` could not be installed: it depends on Riverpod 2, so it conflicts with `flutter_riverpod` 3. It was not used by any test, so it was dropped.
+- `Override` (the type in `harness`) moved to `package:flutter_riverpod/misc.dart`.
+- In the first provider test, `container.read` alone does not keep an `autoDispose` provider alive, so it was disposed while loading ("disposed during loading state, yet no value could be emitted"). The test now holds a `container.listen` subscription, like the second test.
+
+## Checkpoint questions
+
+**1. Which three subtypes make `AsyncValue` sealed, and what does the analyzer report when a `switch` expression misses one?**
+`AsyncData`, `AsyncLoading` and `AsyncError`. Missing one is a compile error, `non_exhaustive_switch_expression`: "The type 'AsyncValue<List<Tick>>' isn't exhaustively matched by the switch cases since it doesn't match the pattern 'AsyncLoading<List<Tick>>()'".
+
+**2. When does `AsyncError.value` carry a non-null value, and when is it null?**
+It is non-null when the provider had already produced data before the error: Riverpod copies the previous value into the error state (e.g. the feed emits ticks and then disconnects). It is null when the error happens before any data was ever emitted, e.g. the very first load fails (`Stream.error('boom')` in the tests).
+
+**3. What is the difference between `ref.refresh(provider)`, `ref.refresh(provider.future)` and `ref.invalidate(provider)`?**
+- `ref.refresh(provider)` throws away the current state, rebuilds the provider immediately, and returns the new `AsyncValue` (usually loading, with the old value kept).
+- `ref.refresh(provider.future)` does the same rebuild but returns the `Future` of the new value, so it can be awaited, e.g. in `RefreshIndicator.onRefresh`, which waits until new data arrives.
+- `ref.invalidate(provider)` only marks the provider as dirty and returns `void`; it is rebuilt lazily the next time it is read or listened to. It is the one to use in button callbacks where you do not need a result.
+
+**4. Why does `AsyncValue(:final value?, isLoading: true)` need to sit above `AsyncData(:final value)`?**
+During a refresh Riverpod keeps the old data, and the state can still be an `AsyncData` with `isLoading == true` (seen while testing: `invalidate` gives `AsyncData loading=true refreshing=true`). The first matching arm wins, so if `AsyncData(:final value)` came first it would catch that state, and the progress bar would never be shown. The more specific arm must come first.
+
+**5. Give one reason to prefer `switch` expressions over `.when(...)` for `AsyncValue`, and one situation where `.when` is still convenient.**
+`switch` lets you match on more than the state: on the content (`value: []`, `value: [final only]`), on flags (`isLoading: true`), and on whether old data exists (`value?`), and the order of arms gives clear priorities, all checked for exhaustiveness by the compiler. `.when` is still convenient for a simple loading / data / error widget written inline, because its defaults (`skipLoadingOnRefresh`, `skipLoadingOnReload`) already keep showing old data during a refresh without writing extra arms.
