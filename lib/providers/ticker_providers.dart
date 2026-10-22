@@ -5,6 +5,7 @@ import '../services/tick_feed.dart';
 
 final tickFeedProvider = Provider<TickFeed>((ref) => TickFeed());
 
-final tickerProvider = StreamProvider.autoDispose<List<Tick>>((ref) {
-  return ref.watch(tickFeedProvider).watch();
-});
+final tickerProvider = StreamProvider.autoDispose<List<Tick>>(
+  (ref) => ref.watch(tickFeedProvider).watch(),
+  retry: (retryCount, error) => null,
+);
